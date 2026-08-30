@@ -31,7 +31,14 @@ def _build_url():
 
 @lru_cache(maxsize=1)
 def get_engine():
-    return create_engine(_build_url(), pool_pre_ping=True, pool_recycle=1800, future=True)
+    return create_engine(
+    _build_url(),
+    pool_pre_ping=True,
+    pool_recycle=1800,
+    pool_timeout=10,
+    connect_args={"connect_timeout": 10},
+    future=True,
+)
 
 
 def validate_new_database() -> dict[str, object]:
