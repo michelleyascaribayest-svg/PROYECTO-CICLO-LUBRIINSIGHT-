@@ -256,19 +256,39 @@ try:
 
         try_chart(_render_margin)
     with b:
-        pulls = [0.08 if i == cat.ingresos.idxmax() else 0 for i in cat.index]
-        fig=go.Figure(go.Pie(labels=cat.categoria,values=cat.ingresos,hole=.62,pull=pulls,
-            marker_colors=[GOLD_LIGHT,STEEL_LIGHT,TEAL,GOLD,STEEL],
-            marker_line=dict(color=PANEL_SOLID,width=3),
-            textinfo="percent",textfont=dict(size=13,color="#0A0B0F",family="Inter"),
-            hovertemplate="<b>%{label}</b><br>$%{value:,.2f} (%{percent})<extra></extra>"))
-        fig.add_annotation(text=f"<b>${cat.ingresos.sum():,.0f}</b><br><span style='font-size:11px;color:{MUTED}'>Total</span>",
-            x=0.5,y=0.5,showarrow=False,font=dict(size=20,color=GOLD_LIGHT,family="Playfair Display"))
-        fig.update_layout(height=370,margin=dict(l=10,r=10,t=45,b=10),title="Participación por categoría",
-            showlegend=True,**PLOTLY_LAYOUT)
-        fig.update_layout(legend=dict(font=dict(color=TEXT),orientation="h",y=-0.1))
-        with st.container(border=True):
-            st.plotly_chart(fig,use_container_width=True)
+        def _render_categories():
+            # Un pastel con porciones de menos del ~3% es ilegible (etiquetas encimadas,
+            # colores que no se distinguen). Se agrupan las categorías chicas en "Otros"
+            # para que el gráfico siempre muestre máximo 4 porciones + Otros, sin importar
+            # cuántas categorías tenga el catálogo real.
+            cat_sorted = cat.sort_values("ingresos", ascending=False).reset_index(drop=True)
+            TOP_CATS = 4
+            if len(cat_sorted) > TOP_CATS:
+                otros_total = cat_sorted.iloc[TOP_CATS:]["ingresos"].sum()
+                cat_pie = pd.concat([
+                    cat_sorted.iloc[:TOP_CATS],
+                    pd.DataFrame([{"categoria": "Otros", "ingresos": otros_total}]),
+                ], ignore_index=True)
+            else:
+                cat_pie = cat_sorted
+            pulls = [0.08 if i == cat_pie.ingresos.idxmax() else 0 for i in cat_pie.index]
+            fig = go.Figure(go.Pie(labels=cat_pie.categoria, values=cat_pie.ingresos, hole=.62, pull=pulls,
+                marker_colors=[GOLD_LIGHT, STEEL_LIGHT, TEAL, GOLD, STEEL],
+                marker_line=dict(color=PANEL_SOLID, width=3),
+                textinfo="percent", textfont=dict(size=13, color="#0A0B0F", family="Inter"),
+                hovertemplate="<b>%{label}</b><br>$%{value:,.2f} (%{percent})<extra></extra>"))
+            fig.add_annotation(text=f"<b>${cat.ingresos.sum():,.0f}</b><br><span style='font-size:11px;color:{MUTED}'>Total</span>",
+                x=0.5, y=0.5, showarrow=False, font=dict(size=20, color=GOLD_LIGHT, family="Playfair Display"))
+            fig.update_layout(height=370, margin=dict(l=10, r=10, t=45, b=10), title="Participación por categoría",
+                showlegend=True, **PLOTLY_LAYOUT)
+            fig.update_layout(legend=dict(font=dict(color=TEXT), orientation="h", y=-0.1))
+            with st.container(border=True):
+                st.plotly_chart(fig, use_container_width=True)
+                top_cat = cat_sorted.iloc[0]
+                share = top_cat.ingresos / cat_sorted.ingresos.sum() * 100 if cat_sorted.ingresos.sum() else 0
+                st.caption(f"'{top_cat.categoria}' concentra el {share:.0f}% de los ingresos por categoría.")
+
+        try_chart(_render_categories)
     st.subheader("Productos")
     top=query_df("""SELECT p.nombre producto,SUM(dv.cantidad) unidades,SUM(dv.cantidad*COALESCE(p.precio,0)) ingresos
                     FROM detalle_venta dv JOIN venta v ON v.id_venta=dv.id_venta JOIN producto p ON p.id_producto=dv.id_producto
@@ -392,12 +412,18 @@ try:
 
     # -----------------------------------------------------------------
     # Ritmo del negocio: cuándo llegan realmente los clientes.
-    # Usa solo la tabla venta (ya confirmada), así que no depende de
-    # nombres de columna nuevos y es la vista más segura de agregar.
+    # Se adapta sola al dato disponible: si fecha_venta trae hora real
+    # (más de un valor distinto de hora en el período), arma el heatmap
+    # día×hora, que es el gráfico más rico. Si todas las ventas quedaron
+    # registradas a la misma hora (por ejemplo 00:00 al importar datos),
+    # ese heatmap sale como bandas planas e ilegibles — así que en ese
+    # caso cae de forma automática a un gráfico por día de la semana,
+    # que siempre es legible y sigue respondiendo "qué días conviene
+    # reforzar personal".
     # -----------------------------------------------------------------
     st.subheader("Ritmo del negocio")
 
-    def _render_heatmap():
+    def _render_ritmo():
         raw = query_df(
             "SELECT fecha_venta FROM venta WHERE fecha_venta::date BETWEEN :start AND :end AND total IS NOT NULL",
             params,
@@ -406,126 +432,40 @@ try:
         dias_es = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
         raw["dia"] = raw.fecha_venta.dt.dayofweek.map(dict(enumerate(dias_es)))
         raw["hora"] = raw.fecha_venta.dt.hour
-        pivot = (raw.groupby(["dia", "hora"]).size().reset_index(name="ventas")
-                    .pivot(index="dia", columns="hora", values="ventas")
-                    .reindex(dias_es).fillna(0))
-        fig = go.Figure(go.Heatmap(
-            z=pivot.values, x=pivot.columns, y=pivot.index,
-            colorscale=[(0, "#161821"), (0.5, STEEL), (1, GOLD_LIGHT)],
-            hovertemplate="%{y}, %{x}:00h<br><b>%{z:.0f} ventas</b><extra></extra>",
-            colorbar=dict(title="Ventas", tickfont=dict(color=TEXT))))
-        fig.update_layout(height=340, title="Ventas por día y hora — dónde concentrar al equipo",
-            margin=dict(l=10, r=10, t=50, b=10),
-            **layout_with(xaxis=dict(title="Hora del día", dtick=1), yaxis=dict(title="")))
+        hay_hora_real = raw["hora"].nunique() > 1
+
+        if hay_hora_real:
+            pivot = (raw.groupby(["dia", "hora"]).size().reset_index(name="ventas")
+                        .pivot(index="dia", columns="hora", values="ventas")
+                        .reindex(dias_es).fillna(0))
+            fig = go.Figure(go.Heatmap(
+                z=pivot.values, x=pivot.columns, y=pivot.index,
+                colorscale=[(0, "#161821"), (0.5, STEEL), (1, GOLD_LIGHT)],
+                hovertemplate="%{y}, %{x}:00h<br><b>%{z:.0f} ventas</b><extra></extra>",
+                colorbar=dict(title="Ventas", tickfont=dict(color=TEXT))))
+            fig.update_layout(height=340, title="Ventas por día y hora — dónde concentrar al equipo",
+                margin=dict(l=10, r=10, t=50, b=10),
+                **layout_with(xaxis=dict(title="Hora del día", dtick=1), yaxis=dict(title="")))
+            caption = "Cada celda es el número de ventas en ese día y hora. Más clara = más movimiento; ahí conviene tener más personal en turno."
+        else:
+            agg = (raw.groupby("dia").size().reindex(dias_es).fillna(0).reset_index(name="ventas"))
+            fig = px.bar(agg, x="dia", y="ventas", text_auto=True,
+                color="ventas", color_continuous_scale=[(0, STEEL), (0.5, TEAL), (1, GOLD_LIGHT)])
+            fig.update_traces(marker_line_width=1, marker_line_color=PANEL_SOLID,
+                hovertemplate="<b>%{x}</b><br>Ventas: %{y}<extra></extra>")
+            fig.update_layout(height=340, title="Ventas por día de la semana — dónde concentrar al equipo",
+                margin=dict(l=10, r=10, t=50, b=10), coloraxis_showscale=False,
+                **layout_with(xaxis=dict(title=""), yaxis=dict(title="Ventas")))
+            dia_top = agg.loc[agg.ventas.idxmax(), "dia"] if agg.ventas.sum() else None
+            caption = (f"'{dia_top}' es el día con más ventas del período — ese es el que más personal necesita."
+                       if dia_top else "Aún no hay suficientes ventas para identificar un patrón por día.")
+
         with st.container(border=True):
             st.plotly_chart(fig, use_container_width=True)
+            st.caption(caption)
 
-    try_chart(_render_heatmap)
+    try_chart(_render_ritmo)
 
-    # -----------------------------------------------------------------
-    # Servicios, vehículos y pagos: aprovecha el resto de las tablas.
-    # Nombres de columna verificados contra el diagrama entidad-relación real:
-    #   - encabezado_servicio(id_encabezado_servicio, nombre, descripcion, placa, fecha, total)
-    #   - detalle_servicio(id_detalle_servicio, id_encabezado_servicio, cedula_empleado,
-    #                       id_servicio, cantidad, subtotal)
-    #   - servicio(id_servicio, nombre, descripcion, precio)
-    #   - vehiculo(placa, cedula_cliente, marca, modelo, anio, color)   [sin tipo_vehiculo:
-    #     se agrupa por marca, que es el dato equivalente más cercano disponible]
-    #   - venta.id_tipo_pago → tipo_pago(id_tipo_pago, nombre, descripcion)
-    # Cada tarjeta corre de forma aislada (try_chart), así que si un nombre
-    # no coincide solo esa tarjeta avisa el detalle técnico, sin romper el resto.
-    # -----------------------------------------------------------------
-    st.subheader("Servicios, vehículos y pagos")
-    c1, c2, c3 = st.columns(3)
-
-    def _render_services():
-        serv = query_df("""SELECT s.nombre servicio, COUNT(*) veces, COALESCE(SUM(ds.subtotal),0) ingresos
-                FROM detalle_servicio ds
-                JOIN encabezado_servicio es ON es.id_encabezado_servicio = ds.id_encabezado_servicio
-                JOIN servicio s ON s.id_servicio = ds.id_servicio
-                WHERE es.fecha::date BETWEEN :start AND :end
-                GROUP BY 1 ORDER BY 3 DESC LIMIT :limit""", {**params, "limit": top_n})
-        if serv.empty:
-            st.info("Sin servicios registrados en el período."); return
-        fig = px.bar(serv.sort_values("ingresos"), x="ingresos", y="servicio", orientation="h",
-            text_auto=".2s", color="ingresos", color_continuous_scale=[(0, TEAL), (1, GOLD_LIGHT)])
-        fig.update_traces(marker_line_width=1, marker_line_color=PANEL_SOLID,
-            hovertemplate="<b>%{y}</b><br>$%{x:,.2f}<extra></extra>")
-        fig.update_layout(height=340, title="Servicios más solicitados", margin=dict(l=10, r=10, t=45, b=10),
-            coloraxis_showscale=False, **PLOTLY_LAYOUT)
-        st.plotly_chart(fig, use_container_width=True)
-
-    def _render_vehicles():
-        veh = query_df("""SELECT COALESCE(v.marca,'Sin especificar') marca, COUNT(es.id_encabezado_servicio) servicios
-                FROM vehiculo v
-                JOIN encabezado_servicio es ON es.placa = v.placa
-                WHERE es.fecha::date BETWEEN :start AND :end
-                GROUP BY 1 ORDER BY 2 DESC LIMIT :limit""", {**params, "limit": top_n})
-        if veh.empty:
-            st.info("Sin vehículos registrados en el período."); return
-        fig = go.Figure(go.Pie(labels=veh.marca, values=veh.servicios, hole=.6,
-            marker_colors=[GOLD_LIGHT, STEEL_LIGHT, TEAL, GOLD, STEEL],
-            marker_line=dict(color=PANEL_SOLID, width=3),
-            textinfo="percent", textfont=dict(size=12, color="#0A0B0F"),
-            hovertemplate="<b>%{label}</b><br>%{value} servicios (%{percent})<extra></extra>"))
-        fig.update_layout(height=340, title="Vehículos atendidos por marca", showlegend=True,
-            margin=dict(l=10, r=10, t=45, b=10), **PLOTLY_LAYOUT)
-        fig.update_layout(legend=dict(font=dict(color=TEXT), orientation="h", y=-0.15))
-        st.plotly_chart(fig, use_container_width=True)
-
-    def _render_payments():
-        pay = query_df("""SELECT COALESCE(tp.nombre,'Sin especificar') metodo, COALESCE(SUM(v.total),0) ingresos
-                FROM venta v LEFT JOIN tipo_pago tp ON tp.id_tipo_pago = v.id_tipo_pago
-                WHERE v.fecha_venta::date BETWEEN :start AND :end AND v.total IS NOT NULL
-                GROUP BY 1 ORDER BY 2 DESC""", params)
-        if pay.empty:
-            st.info("Sin pagos registrados en el período."); return
-        fig = go.Figure(go.Pie(labels=pay.metodo, values=pay.ingresos, hole=.6,
-            marker_colors=[STEEL_LIGHT, GOLD_LIGHT, TEAL, GOLD, STEEL],
-            marker_line=dict(color=PANEL_SOLID, width=3),
-            textinfo="percent", textfont=dict(size=12, color="#0A0B0F"),
-            hovertemplate="<b>%{label}</b><br>$%{value:,.2f} (%{percent})<extra></extra>"))
-        fig.update_layout(height=340, title="Ingresos por método de pago", showlegend=True,
-            margin=dict(l=10, r=10, t=45, b=10), **PLOTLY_LAYOUT)
-        fig.update_layout(legend=dict(font=dict(color=TEXT), orientation="h", y=-0.15))
-        st.plotly_chart(fig, use_container_width=True)
-
-    with c1:
-        with st.container(border=True):
-            try_chart(_render_services)
-    with c2:
-        with st.container(border=True):
-            try_chart(_render_vehicles)
-    with c3:
-        with st.container(border=True):
-            try_chart(_render_payments)
-
-    # -----------------------------------------------------------------
-    # Desempeño por técnico: quién genera más ingresos en servicios,
-    # información directamente accionable para asignación de turnos
-    # o evaluación de desempeño.
-    # -----------------------------------------------------------------
-    def _render_technicians():
-        tech = query_df("""SELECT e.nombre tecnico, COUNT(DISTINCT es.id_encabezado_servicio) servicios,
-                    COALESCE(SUM(ds.subtotal), 0) ingresos
-                FROM detalle_servicio ds
-                JOIN encabezado_servicio es ON es.id_encabezado_servicio = ds.id_encabezado_servicio
-                JOIN empleado e ON e.cedula = ds.cedula_empleado
-                WHERE es.fecha::date BETWEEN :start AND :end
-                GROUP BY 1 ORDER BY 3 DESC LIMIT :limit""", {**params, "limit": top_n})
-        if tech.empty:
-            st.info("Sin servicios asignados a técnicos en el período."); return
-        fig = px.bar(tech.sort_values("ingresos"), x="ingresos", y="tecnico", orientation="h",
-            text_auto=".2s", color="servicios", color_continuous_scale=[(0, TEAL), (1, GOLD_LIGHT)])
-        fig.update_traces(marker_line_width=1, marker_line_color=PANEL_SOLID,
-            hovertemplate="<b>%{y}</b><br>Ingresos generados: $%{x:,.2f}<br>Servicios: %{marker.color}<extra></extra>")
-        fig.update_layout(height=360, title="Desempeño por técnico — ingresos generados en servicios",
-            margin=dict(l=10, r=10, t=45, b=10),
-            coloraxis_colorbar=dict(title="Servicios", tickfont=dict(color=TEXT)), **PLOTLY_LAYOUT)
-        with st.container(border=True):
-            st.plotly_chart(fig, use_container_width=True)
-
-    try_chart(_render_technicians)
 except Exception as error:
     st.error("No fue posible cargar el Dashboard. Verifica la conexión y las tablas de venta, detalle_venta, producto e inventario.")
     with st.expander("Detalle técnico"):
