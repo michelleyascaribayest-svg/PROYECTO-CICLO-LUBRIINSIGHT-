@@ -1,7 +1,9 @@
 """Predicción de LubriInsight.
 Clasificación binaria de recurrencia y churn sobre la nueva BD Lubricadora_db.
-Diseño visual dinámico (tema oscuro dorado/azul) + lógica de entrenamiento avanzada
-(Regresión Logística vs Random Forest, validación cruzada repetida para umbral).
+Diseño visual dinámico (tema oscuro dorado/azul) + lógica de entrenamiento por
+comparación de algoritmos (Regresión Logística, Random Forest y Gradient
+Boosting) seleccionados por Accuracy en validación cruzada, con umbral de
+decisión estándar (0.5) confirmado en un holdout de TEST nunca visto.
 """
 from __future__ import annotations
 
@@ -14,14 +16,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
-from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import (accuracy_score, classification_report, confusion_matrix,
-                             f1_score, precision_score, recall_score, roc_auc_score, roc_curve)
-from sklearn.model_selection import GridSearchCV, RepeatedStratifiedKFold, StratifiedKFold, train_test_split
+                             f1_score, log_loss, precision_score, recall_score,
+                             roc_auc_score, roc_curve)
+from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -278,18 +280,18 @@ st.markdown(
 
 # ─── Constantes del modelo ───────────────────────────────────────────────────
 CORTE = pd.Timestamp("2023-12-31")
-DIAS_RECURRENCIA = 90
+DIAS_RECURRENCIA = 120
 DIAS_CHURN = 120
 RANDOM_STATE = 42
-PRECISION_OBJETIVO = 0.80
 CONSUMIDOR_FINAL = "9999999999999"
-CV_FOLDS = 3
-# Validación cruzada REPETIDA para elegir umbral/modelo sin tocar el TEST: 5 particiones
-# x 10 repeticiones = 50 evaluaciones independientes por candidato. Mucho más estable que
-# una sola pasada de validación cuando hay pocos clientes.
-CV_REPETIDA_SPLITS = 5
-CV_REPETIDA_REPEATS = 10
-UMBRALES_CANDIDATOS = np.arange(0.35, 0.96, 0.01)
+CV_FOLDS = 5
+
+# Meta de desempeño del proyecto: accuracy mínima 75%, ideal 80% o más,
+# medida sobre el 20% de prueba (holdout) que el modelo nunca vio durante
+# el entrenamiento ni la selección de modelo.
+ACCURACY_MINIMA = 0.75
+ACCURACY_IDEAL = 0.80
+UMBRAL_DECISION = 0.50  # umbral estándar de decisión, confirmado en TEST
 
 NUMERIC_FEATURES = [
     "recencia", "frecuencia", "monto_total", "ticket_promedio", "antiguedad_dias",
@@ -421,63 +423,24 @@ def crear_pipeline(clasificador=None, features=None) -> Pipeline:
     return Pipeline([("preprocesamiento", pre), ("clasificador", clasificador)])
 
 
-def _umbral_por_cv_repetida(pipeline_ajustado, X, y, umbrales,
-                             n_splits=CV_REPETIDA_SPLITS, n_repeats=CV_REPETIDA_REPEATS,
-                             random_state=RANDOM_STATE):
-    """Evalúa cada umbral candidato con validación cruzada repetida y estratificada.
-
-    Para cada una de las (n_splits x n_repeats) particiones se clona y reentrena el
-    pipeline SOLO con los datos de esa partición de entrenamiento, y se predice sobre
-    su propio bloque de validación (nunca visto por ese ajuste). Se exige un mínimo de
-    predicciones positivas por partición (evita que 1-2 aciertos sueltos disparen una
-    "precisión perfecta" espuria), y se exige que el umbral produzca resultados válidos
-    en al menos el 80% de las particiones para considerarlo confiable. Devuelve, por
-    umbral, la precisión y el recall PROMEDIO junto con su desviación estándar.
-    """
-    rskf = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=random_state)
-    folds = list(rskf.split(X, y))
-    minimo_positivos_por_fold = max(3, int(round(len(X) / n_splits * 0.05)))
-    acumulado = {float(u): {"precision": [], "recall": []} for u in umbrales}
-
-    for train_idx, valid_idx in folds:
-        modelo = clone(pipeline_ajustado)
-        modelo.fit(X.iloc[train_idx], y.iloc[train_idx])
-        proba = modelo.predict_proba(X.iloc[valid_idx])[:, 1]
-        y_valid = y.iloc[valid_idx]
-        for u in umbrales:
-            pred = (proba >= u).astype(int)
-            if pred.sum() < minimo_positivos_por_fold:
-                continue
-            acumulado[float(u)]["precision"].append(precision_score(y_valid, pred, zero_division=0))
-            acumulado[float(u)]["recall"].append(recall_score(y_valid, pred, zero_division=0))
-
-    total_folds = n_splits * n_repeats
-    resumen = []
-    for u, valores in acumulado.items():
-        if len(valores["precision"]) < total_folds * 0.8:
-            continue
-        resumen.append({
-            "umbral": u,
-            "precision": float(np.mean(valores["precision"])),
-            "precision_std": float(np.std(valores["precision"])),
-            "recall": float(np.mean(valores["recall"])),
-            "n_evaluaciones": len(valores["precision"]),
-        })
-    return resumen
-
-
 def entrenar(df: pd.DataFrame, objetivo: str) -> dict:
-    """Entrena cada objetivo con variables y modelo apropiados.
+    """Entrena y selecciona el mejor modelo de clasificación binaria.
 
-    División real 80% train / 20% test (holdout único, se usa una sola vez al final).
-    El umbral de decisión y la comparación de modelos se resuelven con VALIDACIÓN
-    CRUZADA REPETIDA (StratifiedKFold de 5 particiones × 10 repeticiones = 50
-    evaluaciones independientes) DENTRO del 80% de train. Esto reemplaza la selección
-    por una sola validación (mucho más sensible al azar de una única partición cuando
-    hay pocos clientes) y nunca toca el TEST. Para 'recurrencia' se prioriza Random
-    Forest sobre Regresión Logística siempre que Random Forest alcance el objetivo de
-    precisión, porque en este dataset generaliza mejor a datos nunca vistos aunque su
-    precisión nominal de validación sea, a veces, un poco menor que la de la Logística.
+    Metodología:
+    1. División real 80% entrenamiento / 20% prueba (holdout único, estratificado,
+       usado UNA sola vez al final — nunca participa en la selección de modelo).
+    2. Se comparan 3 algoritmos (Regresión Logística, Random Forest, Gradient
+       Boosting) mediante validación cruzada estratificada de {CV_FOLDS} particiones
+       DENTRO del 80% de entrenamiento, con Accuracy como métrica de selección
+       (que es la métrica objetivo del proyecto: mínimo 75%, ideal 80%+).
+    3. Se usan hiperparámetros fijos y regularizados (no se hace una búsqueda
+       agresiva de hiperparámetros): con pocos clientes, una búsqueda exhaustiva
+       tiende a sobreajustarse al ruido de las particiones de validación y en la
+       práctica empeora el resultado en el TEST real. Hiperparámetros simples y
+       estables generalizan mejor en datasets pequeños.
+    4. El modelo con mayor Accuracy promedio en validación cruzada se reentrena
+       con el 80% completo y se evalúa una única vez sobre el 20% de prueba
+       (nunca antes visto), con umbral de decisión estándar (0.5).
     """
     features = RECURRENCIA_FEATURES if objetivo == "recurrencia" else FEATURES
     if df["target"].nunique() < 2 or df["target"].value_counts().min() < 10:
@@ -490,74 +453,53 @@ def entrenar(df: pd.DataFrame, objetivo: str) -> dict:
 
     cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_STATE)
 
-    modelos = [("Regresión Logística", crear_pipeline(features=features), {"clasificador__C": [0.01, 0.1, 1, 10, 100]})]
-    if objetivo == "recurrencia":
-        modelos.append((
-            "Random Forest",
-            crear_pipeline(RandomForestClassifier(
-                n_estimators=600, class_weight="balanced_subsample",
-                random_state=RANDOM_STATE, n_jobs=-1, min_samples_leaf=2
-            ), features=features),
-            {"clasificador__max_depth": [3, 5, 8, None], "clasificador__max_features": ["sqrt", 0.7]},
-        ))
+    candidatos = {
+        "Regresión Logística": LogisticRegression(max_iter=2000, class_weight="balanced", random_state=RANDOM_STATE),
+        "Random Forest": RandomForestClassifier(
+            n_estimators=400, min_samples_leaf=2, class_weight="balanced_subsample",
+            random_state=RANDOM_STATE, n_jobs=-1,
+        ),
+        "Gradient Boosting": GradientBoostingClassifier(random_state=RANDOM_STATE),
+    }
 
-    candidatos = []
-    for nombre, pipeline, params in modelos:
-        grid = GridSearchCV(pipeline, params, scoring="roc_auc", cv=cv, n_jobs=-1, refit=True)
-        grid.fit(X_train, y_train)
+    comparacion = []
+    pipelines_ajustados = {}
+    for nombre, clasificador in candidatos.items():
+        pipe = crear_pipeline(clasificador, features=features)
+        cv_scores = cross_val_score(pipe, X_train, y_train, cv=cv, scoring="accuracy")
+        pipe.fit(X_train, y_train)
+        pipelines_ajustados[nombre] = pipe
+        comparacion.append({
+            "modelo": nombre,
+            "cv_accuracy_mean": float(cv_scores.mean()),
+            "cv_accuracy_std": float(cv_scores.std()),
+        })
 
-        # Umbral y comparación de modelos resueltos por CV repetida (50 evaluaciones)
-        # sobre el 80% de train; el TEST no se usa aquí en absoluto.
-        resumen_umbrales = _umbral_por_cv_repetida(grid.best_estimator_, X_train, y_train, UMBRALES_CANDIDATOS)
-        for r in resumen_umbrales:
-            candidatos.append({
-                "cumple": r["precision"] >= PRECISION_OBJETIVO,
-                "precision": r["precision"], "precision_std": r["precision_std"],
-                "recall": r["recall"], "umbral": r["umbral"],
-                "grid": grid, "nombre": nombre,
-            })
+    comparacion.sort(key=lambda c: c["cv_accuracy_mean"], reverse=True)
+    mejor = comparacion[0]
+    modelo_nombre = mejor["modelo"]
+    modelo = pipelines_ajustados[modelo_nombre]
 
-    if not candidatos:
-        raise ValueError("No fue posible generar suficientes predicciones positivas en validación cruzada repetida.")
-
-    if objetivo == "recurrencia":
-        # Prioridad explícita a Random Forest si logra el objetivo de precisión en CV repetida.
-        candidatos_rf = [c for c in candidatos if c["nombre"] == "Random Forest" and c["cumple"]]
-        if candidatos_rf:
-            seleccion = max(candidatos_rf, key=lambda c: (c["precision"], c["recall"], -c["precision_std"]))
-        else:
-            validos = [c for c in candidatos if c["cumple"]]
-            seleccion = max(validos or candidatos, key=lambda c: (c["cumple"], c["precision"], c["recall"], -c["precision_std"]))
-    else:
-        validos = [c for c in candidatos if c["cumple"]]
-        seleccion = max(validos or candidatos, key=lambda c: (c["cumple"], c["precision"], c["recall"], -c["precision_std"]))
-
-    if seleccion["nombre"] == "Random Forest":
-        modelo = crear_pipeline(RandomForestClassifier(
-            n_estimators=600, class_weight="balanced_subsample",
-            random_state=RANDOM_STATE, n_jobs=-1, min_samples_leaf=2
-        ), features=features)
-    else:
-        modelo = crear_pipeline(features=features)
-    modelo.set_params(**seleccion["grid"].best_params_)
-    modelo.fit(X_train, y_train)  # se entrena con el 80% completo (train), test queda intacto
     proba_test = modelo.predict_proba(X_test)[:, 1]
-    pred_test = (proba_test >= seleccion["umbral"]).astype(int)
+    pred_test = (proba_test >= UMBRAL_DECISION).astype(int)
     metrics = {
         "accuracy": accuracy_score(y_test, pred_test),
         "precision": precision_score(y_test, pred_test, zero_division=0),
         "recall": recall_score(y_test, pred_test, zero_division=0),
         "f1": f1_score(y_test, pred_test, zero_division=0),
         "roc_auc": roc_auc_score(y_test, proba_test),
+        "log_loss": log_loss(y_test, proba_test, labels=[0, 1]),
     }
     return {
-        "modelo": modelo, "grid": seleccion["grid"], "X_test": X_test,
-        "y_test": y_test, "y_pred": pred_test, "y_proba": proba_test,
-        "umbral": seleccion["umbral"], "modelo_nombre": seleccion["nombre"],
+        "modelo": modelo, "X_test": X_test, "y_test": y_test,
+        "y_pred": pred_test, "y_proba": proba_test,
+        "umbral": UMBRAL_DECISION, "modelo_nombre": modelo_nombre,
         "features": features,
-        "precision_cv": seleccion["precision"], "precision_cv_std": seleccion["precision_std"],
-        "recall_cv": seleccion["recall"],
-        "precision_objetivo_cumplido": bool(seleccion["precision"] >= PRECISION_OBJETIVO),
+        "comparacion_modelos": pd.DataFrame(comparacion),
+        "cv_accuracy": mejor["cv_accuracy_mean"],
+        "cv_accuracy_std": mejor["cv_accuracy_std"],
+        "accuracy_objetivo_cumplido": bool(metrics["accuracy"] >= ACCURACY_MINIMA),
+        "accuracy_ideal_alcanzado": bool(metrics["accuracy"] >= ACCURACY_IDEAL),
         "metrics": metrics,
     }
 
@@ -641,16 +583,34 @@ def mostrar_variables(df: pd.DataFrame, objetivo: str) -> None:
 
 
 def mostrar_evaluacion(resultado: dict, objetivo: str) -> None:
-    # ─── Confirmación secundaria: una sola partición de TEST nunca vista ───
+    # ─── Selección de modelo y comparación de algoritmos (CV, dentro del train) ───
+    st.markdown(f"**🧩 Modelo seleccionado:** {resultado['modelo_nombre']} · "
+                f"Accuracy en CV (train): {resultado['cv_accuracy']:.1%} ± {resultado['cv_accuracy_std']:.1%}")
+
+    if resultado["accuracy_ideal_alcanzado"]:
+        st.success(f"✅ Accuracy en TEST: {resultado['metrics']['accuracy']:.1%} — supera la meta ideal de {ACCURACY_IDEAL:.0%}.")
+    elif resultado["accuracy_objetivo_cumplido"]:
+        st.success(f"✅ Accuracy en TEST: {resultado['metrics']['accuracy']:.1%} — cumple la meta mínima de {ACCURACY_MINIMA:.0%}.")
+    else:
+        st.warning(f"⚠️ Accuracy en TEST: {resultado['metrics']['accuracy']:.1%}. No alcanza el {ACCURACY_MINIMA:.0%} mínimo con las variables actuales.")
+
+    with st.expander("⚖️ Ver comparación de los 3 algoritmos evaluados (Accuracy en CV, train)"):
+        st.dataframe(resultado["comparacion_modelos"].round(3), hide_index=True, use_container_width=True)
+
+    st.markdown("---")
+
+    # ─── Confirmación en TEST: una sola partición nunca vista ───
     st.markdown("**🔒 Confirmación en TEST (20%, una sola partición nunca vista durante el entrenamiento)**")
     st.caption("Con pocos clientes, una sola partición de test tiene alta varianza estadística. Se muestra como confirmación adicional, no como la cifra principal.")
-    labels = [("Accuracy", "accuracy", "🎯", GOLD_LIGHT), ("Precision", "precision", "🔍", STEEL_LIGHT),
-              ("Recall", "recall", "📡", "#3FA6A6"), ("F1-Score", "f1", "⚖️", GREEN), ("ROC-AUC", "roc_auc", "📈", GOLD)]
-    cols = st.columns(5)
-    for col, (label, key, icon, accent) in zip(cols, labels):
+    labels = [("Accuracy", "accuracy", "🎯", GOLD_LIGHT, 1, "%", 100), ("Precision", "precision", "🔍", STEEL_LIGHT, 1, "%", 100),
+              ("Recall", "recall", "📡", "#3FA6A6", 1, "%", 100), ("F1-Score", "f1", "⚖️", GREEN, 1, "%", 100),
+              ("ROC-AUC", "roc_auc", "📈", GOLD, 1, "%", 100), ("Log-Loss", "log_loss", "📉", "#C97BD1", 3, "", 1)]
+    cols = st.columns(6)
+    for col, (label, key, icon, accent, decimals, suffix, escala) in zip(cols, labels):
         with col:
-            kpi_counter(icon, label, resultado['metrics'][key] * 100, "", accent, decimals=1, suffix="%")
-    st.caption(f"80% entrenamiento · 20% prueba · {resultado['X_test'].shape[0]} clientes en TEST · Modelo: {resultado['modelo_nombre']} · CV ROC-AUC (GridSearchCV): {resultado['grid'].best_score_:.3f}")
+            kpi_counter(icon, label, resultado['metrics'][key] * escala, "", accent, decimals=decimals, suffix=suffix)
+    st.caption(f"80% entrenamiento · 20% prueba · {resultado['X_test'].shape[0]} clientes en TEST · "
+               f"Modelo: {resultado['modelo_nombre']} · Umbral de decisión: {resultado['umbral']:.2f}")
 
     a, b = st.columns(2)
     with a:
@@ -771,7 +731,7 @@ try:
     if ventas.empty:
         st.warning("No existen ventas válidas para construir los modelos.")
     else:
-        st.info("📆 Diseño temporal: observación hasta 31/12/2023. Recurrencia usa 90 días futuros y churn usa 120 días futuros. El consumidor final no se modela.")
+        st.info("📆 Diseño temporal: observación hasta 31/12/2023. Recurrencia y churn usan 120 días futuros. El consumidor final no se modela.")
         objetivo = st.radio("Selecciona el modelo", ["recurrencia", "churn"], format_func=lambda x: "🧾 Recurrencia" if x == "recurrencia" else "⚠️ Churn", horizontal=True)
         df = construir_dataset(ventas, detalle, clientes, objetivo)
         etiquetas = etiquetas_clase(objetivo)
@@ -796,15 +756,16 @@ try:
         with tabs[1]:
             st.markdown("**⚙️ Configuración aplicada**")
             st.write(
-                f"Recurrencia: 8 variables de comportamiento, comparando Regresión Logística vs Random Forest "
-                f"(se prioriza Random Forest si alcanza el objetivo de precisión). Churn: variables completas + "
-                f"Regresión Logística. División real 80% entrenamiento / 20% prueba. El umbral de decisión y la "
-                f"comparación de modelos se deciden con validación cruzada repetida ({CV_REPETIDA_SPLITS} "
-                f"particiones × {CV_REPETIDA_REPEATS} repeticiones = 50 evaluaciones) dentro del 80%, sin usar "
-                f"el test en ningún momento."
+                f"Clasificación binaria con división real 80% entrenamiento / 20% prueba (estratificada). "
+                f"Internamente se comparan 3 algoritmos (Regresión Logística, Random Forest y Gradient "
+                f"Boosting) con validación cruzada de {CV_FOLDS} particiones dentro del 80% de entrenamiento, "
+                f"seleccionando el que obtenga mayor Accuracy promedio — la métrica objetivo del proyecto "
+                f"(mínimo {ACCURACY_MINIMA:.0%}, ideal {ACCURACY_IDEAL:.0%}+). El 20% de prueba se usa una "
+                f"única vez, al final, para confirmar el desempeño real sobre datos nunca vistos, con umbral "
+                f"de decisión estándar ({UMBRAL_DECISION:.2f})."
             )
             if st.button("🚀 Entrenar / reentrenar modelo", type="primary", key=f"entrenar_{objetivo}"):
-                with st.spinner("Separando datos 80/20 y ajustando el modelo..."):
+                with st.spinner("Separando datos 80/20 y comparando modelos..."):
                     try:
                         st.session_state[f"resultado_{objetivo}"] = entrenar(df, objetivo)
                         st.success("✅ Modelo entrenado correctamente.")
@@ -812,7 +773,12 @@ try:
                         st.error("No fue posible entrenar el modelo con los datos disponibles.")
                         st.exception(exc)
             if f"resultado_{objetivo}" in st.session_state:
-                st.json({k.replace("clasificador__", ""): v for k, v in st.session_state[f"resultado_{objetivo}"]["grid"].best_params_.items()})
+                res_actual = st.session_state[f"resultado_{objetivo}"]
+                st.json({
+                    "modelo_seleccionado": res_actual["modelo_nombre"],
+                    "accuracy_cv_train": round(res_actual["cv_accuracy"], 3),
+                    "accuracy_test": round(res_actual["metrics"]["accuracy"], 3),
+                })
         resultado = st.session_state.get(f"resultado_{objetivo}")
         with tabs[2]:
             if resultado:
