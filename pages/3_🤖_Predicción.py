@@ -388,22 +388,6 @@ def mostrar_variables(df: pd.DataFrame, objetivo: str) -> None:
     st.subheader("📊 Variables del Modelo")
     st.caption("Variables calculadas con datos históricos hasta el 31/12/2023. El consumidor final genérico se excluye.")
 
-    # ─── Variable Objetivo (Y) ───
-    if objetivo == "recurrencia":
-        y_desc = f"El cliente <strong>compró</strong> en los {DIAS_RECURRENCIA} días posteriores al corte (31/12/2023)."
-        y_zero = "No compró en ese periodo."
-    else:
-        y_desc = f"El cliente <strong>no compró</strong> en los {DIAS_CHURN} días posteriores al corte (31/12/2023)."
-        y_zero = "Sí compró en ese periodo."
-
-    st.markdown(f"""
-    <div class="objetivo-box">
-        <h4>🎯 Variable Objetivo (Y): <code>{objetivo}</code></h4>
-        <p><strong>Clase 1:</strong> {y_desc}<br>
-        <strong>Clase 0:</strong> {y_zero}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
     # ─── Variables Predictoras (X) ───
     st.markdown("#### 🛠️ Variables Predictoras (X)")
     st.caption("Estas son las características que el modelo usa para hacer la predicción.")
@@ -438,6 +422,22 @@ def mostrar_variables(df: pd.DataFrame, objetivo: str) -> None:
                 """, unsafe_allow_html=True)
     else:
         st.caption("El modelo de recurrencia usa solo variables de comportamiento de compra (sin datos demográficos), para reducir ruido con pocos clientes.")
+
+    # ─── Variable Objetivo (Y) ───
+    if objetivo == "recurrencia":
+        y_desc = f"El cliente <strong>compró</strong> en los {DIAS_RECURRENCIA} días posteriores al corte (31/12/2023)."
+        y_zero = "No compró en ese periodo."
+    else:
+        y_desc = f"El cliente <strong>no compró</strong> en los {DIAS_CHURN} días posteriores al corte (31/12/2023)."
+        y_zero = "Sí compró en ese periodo."
+
+    st.markdown(f"""
+    <div class="objetivo-box">
+        <h4>🎯 Variable Objetivo (Y): <code>{objetivo}</code></h4>
+        <p><strong>Clase 1:</strong> {y_desc}<br>
+        <strong>Clase 0:</strong> {y_zero}</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     with st.expander("📊 Ver distribución de la variable objetivo"):
         balance = df["target"].value_counts().rename_axis("clase").reset_index(name="registros")
@@ -629,8 +629,14 @@ try:
         balance = df.target.value_counts()
         cards = st.columns(3)
         cards[0].metric("👥 CLIENTES MODELABLES", f"{len(df):,}", "Consumidor final excluido")
-        cards[1].metric("✅ CLASE 1", f"{int(balance.get(1, 0)):,}", "Objetivo positivo")
-        cards[2].metric("⬜ CLASE 0", f"{int(balance.get(0, 0)):,}", "Objetivo negativo")
+        if objetivo == "recurrencia":
+            icono_1, label_1 = "✅", "Cliente Activo"
+            icono_0, label_0 = "⚪", "Cliente Inactivo"
+        else:
+            icono_1, label_1 = "⚠️", "Cliente Inactivo (en riesgo)"
+            icono_0, label_0 = "✅", "Cliente Activo"
+        cards[1].metric(f"{icono_1} CLASE 1", f"{int(balance.get(1, 0)):,}", label_1)
+        cards[2].metric(f"{icono_0} CLASE 0", f"{int(balance.get(0, 0)):,}", label_0)
 
         # ─── TABS ────────────────────────────────────────────────────────────
         tabs = st.tabs(["📘 Entender el modelo", "⚙️ Entrenamiento", "📊 Evaluación", "🔮 Probar predicción"])
