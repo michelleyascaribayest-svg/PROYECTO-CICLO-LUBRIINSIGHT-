@@ -1,9 +1,6 @@
 """Predicción de LubriInsight.
 Clasificación binaria de recurrencia y churn sobre la nueva BD Lubricadora_db.
-Diseño visual dinámico (tema oscuro dorado/azul) + lógica de entrenamiento por
-comparación de algoritmos (Regresión Logística, Random Forest y Gradient
-Boosting) seleccionados por Accuracy en validación cruzada, con umbral de
-decisión estándar (0.5) confirmado en un holdout de TEST nunca visto.
+Diseño visual dinámico (tema oscuro dorado/azul).
 """
 from __future__ import annotations
 
@@ -15,7 +12,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
@@ -77,8 +73,6 @@ p, span, div, label{{color:{TEXT}}}
 
 @keyframes fadeSlideUp{{from{{opacity:0;transform:translateY(16px)}}to{{opacity:1;transform:translateY(0)}}}}
 @keyframes softPulse{{0%,100%{{opacity:.5}}50%{{opacity:1}}}}
-@keyframes ringPulse{{0%{{box-shadow:0 0 0 0 rgba(227,167,62,.45)}}70%{{box-shadow:0 0 0 10px rgba(227,167,62,0)}}100%{{box-shadow:0 0 0 0 rgba(227,167,62,0)}}}}
-@keyframes shimmerSweep{{0%{{transform:translateX(-120%)}}100%{{transform:translateX(220%)}}}}
 @keyframes heroSheen{{0%{{left:-60%}}50%{{left:120%}}100%{{left:120%}}}}
 
 .hero{{position:relative;background:linear-gradient(160deg,#12141B 0%,#0A0B0F 70%);border:1px solid rgba(217,169,76,.25);
@@ -96,11 +90,6 @@ p, span, div, label{{color:{TEXT}}}
     display:flex;align-items:center;gap:8px}}
 .eyebrow .dot{{width:7px;height:7px;border-radius:50%;background:{GOLD_LIGHT};box-shadow:0 0 8px {GOLD_LIGHT};
     animation:softPulse 1.8s ease-in-out infinite}}
-
-.section-title{{font-family:'Playfair Display',serif;font-size:1.3rem;font-weight:700;color:{TEXT};
-    display:flex;align-items:center;gap:10px;margin:26px 0 14px 0}}
-.section-title .bar{{width:5px;height:22px;border-radius:3px;
-    background:linear-gradient(180deg,{GOLD_LIGHT},{STEEL_LIGHT});box-shadow:0 0 10px rgba(245,207,122,.5)}}
 
 [data-testid="stMetric"]{{background:{PANEL};border:1px solid {BORDER};border-radius:16px;padding:18px;
     box-shadow:0 8px 22px rgba(0,0,0,.35);backdrop-filter:blur(6px)}}
@@ -125,17 +114,8 @@ p, span, div, label{{color:{TEXT}}}
 .objetivo-box h4{{color:{GOLD_LIGHT};margin:0 0 6px;font-size:.85rem;text-transform:uppercase;letter-spacing:.1em}}
 .objetivo-box p{{color:{TEXT};margin:0;font-size:.95rem;line-height:1.5}}
 .objetivo-box code{{background:rgba(227,167,62,.18);color:{GOLD_LIGHT};padding:2px 8px;border-radius:6px}}
-.clase-chip{{display:inline-flex;align-items:center;gap:6px;padding:3px 11px;border-radius:999px;font-size:.78rem;font-weight:700;margin:2px 0}}
-.clase-activo{{background:rgba(46,209,140,.15);color:{GREEN};border:1px solid rgba(46,209,140,.35)}}
-.clase-inactivo{{background:rgba(229,97,91,.15);color:{RED};border:1px solid rgba(229,97,91,.35)}}
 
-.client-card{{background:{PANEL};border:1px solid {BORDER};border-radius:14px;padding:16px 20px;margin-bottom:16px;
-    animation:fadeSlideUp .45s ease-out}}
-.client-card strong{{color:{GOLD_LIGHT};font-size:1.05rem}}
-.client-card span{{color:{MUTED};margin-left:12px}}
-.client-card code{{background:rgba(255,255,255,.06);color:{STEEL_LIGHT};padding:2px 6px;border-radius:5px}}
-
-/* Pestañas con la misma tipografía de los títulos (Playfair Display), más grandes y legibles */
+/* Pestañas con la misma tipografía de los títulos (Playfair Display) */
 [data-baseweb="tab-list"]{{border-bottom:1px solid {BORDER};gap:6px}}
 [data-baseweb="tab"]{{color:{MUTED};font-weight:600;transition:color .2s ease}}
 [data-baseweb="tab"] p{{font-family:'Playfair Display',serif;font-weight:600;font-size:1.02rem;letter-spacing:.01em}}
@@ -188,100 +168,20 @@ PLOTLY_LAYOUT = dict(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
     xaxis=dict(gridcolor='rgba(255,255,255,.10)'), yaxis=dict(gridcolor='rgba(255,255,255,.10)'),
     legend=dict(font=dict(color=TEXT)), hoverlabel=dict(bgcolor=PANEL_SOLID, font_color=TEXT, bordercolor=BORDER))
 
-
-def section_title(text: str):
-    st.markdown(f'<div class="section-title"><span class="bar"></span>{text}</div>', unsafe_allow_html=True)
-
-
-# ------------------------------------------------------------------
-# Tarjeta KPI dinámica: número que cuenta en vivo, borde con brillo
-# giratorio y "shimmer" — misma identidad visual que Procesamiento.
-# ------------------------------------------------------------------
-_kpi_id = [0]
-def kpi_counter(icon, label, value, subtext, accent, decimals=0, prefix="", suffix="", trend_pct=None):
-    _kpi_id[0] += 1
-    uid = f"kpi{_kpi_id[0]}"
-
-    trend_html = ""
-    if trend_pct is not None:
-        up = trend_pct >= 0
-        tcolor = GREEN if up else RED
-        tarrow = "▲" if up else "▼"
-        trend_html = (f'<div class="kpi-trend" style="color:{tcolor};background:{tcolor}22;'
-                      f'border:1px solid {tcolor}55">{tarrow} {abs(trend_pct):.1f}%</div>')
-
-    html = f'''
-    <style>
-      html, body {{ margin:0; padding:0; background:transparent; font-family:'Inter',sans-serif; overflow:visible; }}
-      @keyframes fadeIn{{from{{opacity:0;transform:translateY(10px)}}to{{opacity:1;transform:translateY(0)}}}}
-      @property --a{{syntax:'<angle>';initial-value:0deg;inherits:false}}
-      @keyframes spin{{to{{--a:360deg}}}}
-      @keyframes shimmerSweep{{0%{{transform:translateX(-120%)}}100%{{transform:translateX(220%)}}}}
-      @keyframes ringPulse{{0%{{box-shadow:0 0 0 0 rgba(227,167,62,.45)}}70%{{box-shadow:0 0 0 10px rgba(227,167,62,0)}}100%{{box-shadow:0 0 0 0 rgba(227,167,62,0)}}}}
-      .kpi-wrap{{position:relative;border-radius:16px;padding:1.5px;
-        background:conic-gradient(from var(--a),{accent},transparent 30%,transparent 70%,{accent});
-        animation:spin 5s linear infinite,fadeIn .5s ease-out;}}
-      .kpi-card{{position:relative;background:linear-gradient(160deg,{PANEL_SOLID},#0d0f15);
-        border-radius:14.5px;padding:16px 16px 14px;box-sizing:border-box;overflow:hidden;
-        transition:transform .25s ease,box-shadow .25s ease;}}
-      .kpi-card:hover{{transform:translateY(-4px);box-shadow:0 14px 30px rgba(0,0,0,.5)}}
-      .kpi-card::before{{content:'';position:absolute;top:0;left:-40%;width:30%;height:100%;
-        background:linear-gradient(100deg,transparent,rgba(255,255,255,.06),transparent);
-        animation:shimmerSweep 3.2s ease-in-out infinite;pointer-events:none}}
-      .kpi-top{{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}}
-      .kpi-badge{{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;
-        justify-content:center;font-size:1rem;
-        background:radial-gradient(circle,{accent}55,{accent}22);
-        animation:ringPulse 2.6s ease-out infinite}}
-      .kpi-trend{{font-size:.68rem;font-weight:800;padding:2px 8px;border-radius:999px}}
-      .kpi-label{{text-transform:uppercase;letter-spacing:.1em;font-weight:800;font-size:.68rem;
-        margin-bottom:6px;color:{accent}}}
-      .kpi-value{{font-size:1.6rem;font-weight:800;font-variant-numeric:tabular-nums;
-        background:linear-gradient(90deg,{TEXT},{accent});-webkit-background-clip:text;
-        background-clip:text;-webkit-text-fill-color:transparent}}
-      .kpi-sub{{color:{MUTED};font-size:.72rem;margin-top:4px}}
-    </style>
-    <div class="kpi-wrap">
-      <div class="kpi-card">
-        <div class="kpi-top">
-          <div class="kpi-badge">{icon}</div>
-          {trend_html}
-        </div>
-        <div class="kpi-label">{label}</div>
-        <div class="kpi-value"><span id="{uid}">0</span></div>
-        <div class="kpi-sub">{subtext}</div>
-      </div>
-    </div>
-    <script>
-    (function(){{
-      const el = document.getElementById("{uid}");
-      const end = {value}; const decimals = {decimals}; const prefix = "{prefix}"; const suffix = "{suffix}";
-      const start = performance.now(); const duration = 1300;
-      function step(ts){{
-        const p = Math.min((ts - start) / duration, 1);
-        const eased = 1 - Math.pow(1 - p, 3);
-        el.textContent = prefix + (eased*end).toLocaleString('es-ES', {{minimumFractionDigits:decimals,maximumFractionDigits:decimals}}) + suffix;
-        if (p < 1) requestAnimationFrame(step);
-        else el.textContent = prefix + end.toLocaleString('es-ES', {{minimumFractionDigits:decimals,maximumFractionDigits:decimals}}) + suffix;
-      }}
-      requestAnimationFrame(step);
-    }})();
-    </script>'''
-    components.html(html, height=150)
-
-
 # ─── Banner hero ─────────────────────────────────────────────────────────────
 st.markdown(
     '<div class="hero"><div class="eyebrow"><span class="dot"></span>LAVADORA S.A. · INTELIGENCIA COMERCIAL</div>'
     '<h1><span class="hero-icon">🤖</span>Predicción</h1>'
-    '<p>Anticipa qué clientes van a volver a comprar y cuáles están en riesgo de abandonar, '
-    'a partir de su comportamiento real de compra.</p></div>',
+    '<p>Clasificación binaria para anticipar recurrencia y riesgo de abandono de clientes.</p></div>',
     unsafe_allow_html=True)
 
 # ─── Constantes del modelo ───────────────────────────────────────────────────
+# Diseño temporal (out-of-time, sin fuga de datos): se observa el historial de
+# compras HASTA la fecha de corte, y se etiqueta según lo que ocurre DESPUÉS,
+# en una ventana futura. El modelo nunca ve el futuro durante el entrenamiento.
 CORTE = pd.Timestamp("2023-12-31")
-DIAS_RECURRENCIA = 120
-DIAS_CHURN = 120
+DIAS_RECURRENCIA = 120  # ventana de "regreso" (~4 meses, ciclo típico de mantenimiento)
+DIAS_CHURN = 120        # ventana de "abandono" (~4 meses sin comprar)
 RANDOM_STATE = 42
 CONSUMIDOR_FINAL = "9999999999999"
 CV_FOLDS = 5
@@ -291,7 +191,8 @@ CV_FOLDS = 5
 # el entrenamiento ni la selección de modelo.
 ACCURACY_MINIMA = 0.75
 ACCURACY_IDEAL = 0.80
-UMBRAL_DECISION = 0.50  # umbral estándar de decisión, confirmado en TEST
+UMBRAL_DECISION = 0.50  # umbral estándar; ver nota metodológica más abajo
+NOMBRE_MODELO_DISPLAY = "Clasificación Binaria"  # etiqueta mostrada en la interfaz
 
 NUMERIC_FEATURES = [
     "recencia", "frecuencia", "monto_total", "ticket_promedio", "antiguedad_dias",
@@ -330,27 +231,6 @@ def mapear_genero(df: pd.DataFrame) -> pd.DataFrame:
     """Convierte valores numéricos de género a etiquetas legibles."""
     df["genero"] = df["genero"].astype(str).str.strip().map(lambda x: GENERO_MAP.get(x, x))
     return df
-
-
-# ─── Qué significa "Clase 0" y "Clase 1" en lenguaje simple ─────────────────
-# Ojo: el significado se INVIERTE entre recurrencia y churn. En recurrencia,
-# Clase 1 = buena noticia (el cliente sigue activo). En churn, Clase 1 = mala
-# noticia (el cliente está en riesgo / inactivo). Por eso esto se calcula
-# según el objetivo seleccionado, no es un texto fijo.
-def etiquetas_clase(objetivo: str) -> dict:
-    if objetivo == "recurrencia":
-        return {
-            1: {"nombre": "Activo", "chip": "clase-activo", "icon": "🟢",
-                "desc": f"Volvió a comprar dentro de los {DIAS_RECURRENCIA} días"},
-            0: {"nombre": "Inactivo", "chip": "clase-inactivo", "icon": "⚪",
-                "desc": f"No compró en los {DIAS_RECURRENCIA} días"},
-        }
-    return {
-        1: {"nombre": "En riesgo / Inactivo", "chip": "clase-inactivo", "icon": "🔴",
-            "desc": f"No compró en los {DIAS_CHURN} días — señal de abandono"},
-        0: {"nombre": "Activo", "chip": "clase-activo", "icon": "🟢",
-            "desc": f"Sí compró en los {DIAS_CHURN} días — cliente conservado"},
-    }
 
 
 def cargar_fuentes() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -430,11 +310,11 @@ def entrenar(df: pd.DataFrame, objetivo: str) -> dict:
     1. División real 80% entrenamiento / 20% prueba (holdout único, estratificado,
        usado UNA sola vez al final — nunca participa en la selección de modelo).
     2. Se comparan 3 algoritmos (Regresión Logística, Random Forest, Gradient
-       Boosting) mediante validación cruzada estratificada de {CV_FOLDS} particiones
+       Boosting) mediante validación cruzada estratificada de 5 particiones
        DENTRO del 80% de entrenamiento, con Accuracy como métrica de selección
        (que es la métrica objetivo del proyecto: mínimo 75%, ideal 80%+).
     3. Se usan hiperparámetros fijos y regularizados (no se hace una búsqueda
-       agresiva de hiperparámetros): con pocos clientes, una búsqueda exhaustiva
+       agresiva de hiperparámetros): con ~270 clientes, una búsqueda exhaustiva
        tiende a sobreajustarse al ruido de las particiones de validación y en la
        práctica empeora el resultado en el TEST real. Hiperparámetros simples y
        estables generalizan mejor en datasets pequeños.
@@ -508,49 +388,7 @@ def mostrar_variables(df: pd.DataFrame, objetivo: str) -> None:
     st.subheader("📊 Variables del Modelo")
     st.caption("Variables calculadas con datos históricos hasta el 31/12/2023. El consumidor final genérico se excluye.")
 
-    features_usadas = RECURRENCIA_FEATURES if objetivo == "recurrencia" else FEATURES
-
-    # ─── 1) Variables Predictoras (X) — primero, porque son el punto de partida ───
-    section_title("🛠️ Variables Predictoras (X)")
-    st.caption("Estas son las características que el modelo usa para hacer la predicción.")
-    if objetivo == "recurrencia":
-        st.caption("🌲 Recurrencia entrena solo con variables de comportamiento de compra (sin demográficas) para reducir ruido.")
-
-    numericas_usadas = [f for f in NUMERIC_FEATURES if f in features_usadas]
-    st.markdown("**📊 Numéricas**")
-    cols_per_row = 4
-    for i in range(0, len(numericas_usadas), cols_per_row):
-        cols = st.columns(cols_per_row)
-        for j, feat in enumerate(numericas_usadas[i:i+cols_per_row]):
-            icon, name, desc = FEATURE_META[feat]
-            with cols[j]:
-                st.markdown(f"""
-                <div class="var-card">
-                    <span class="var-icon">{icon}</span><span class="var-name">{name}</span>
-                    <div class="var-desc">{desc}</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-    categoricas_usadas = [f for f in CATEGORICAL_FEATURES if f in features_usadas]
-    if categoricas_usadas:
-        st.markdown("**🏷️ Categóricas**")
-        cols = st.columns(len(categoricas_usadas))
-        for j, feat in enumerate(categoricas_usadas):
-            icon, name, desc = FEATURE_META[feat]
-            with cols[j]:
-                st.markdown(f"""
-                <div class="var-card">
-                    <span class="var-icon">{icon}</span><span class="var-name">{name}</span>
-                    <div class="var-desc">{desc}</div>
-                </div>
-                """, unsafe_allow_html=True)
-    else:
-        st.caption("Sin variables categóricas para este objetivo.")
-
-    # ─── 2) Variable Objetivo (Y) — después, ya con el contexto de las X ───
-    section_title("🎯 Variable Objetivo (Y)")
-    etiquetas = etiquetas_clase(objetivo)
-    e1, e0 = etiquetas[1], etiquetas[0]
+    # ─── Variable Objetivo (Y) ───
     if objetivo == "recurrencia":
         y_desc = f"El cliente <strong>compró</strong> en los {DIAS_RECURRENCIA} días posteriores al corte (31/12/2023)."
         y_zero = "No compró en ese periodo."
@@ -561,31 +399,60 @@ def mostrar_variables(df: pd.DataFrame, objetivo: str) -> None:
     st.markdown(f"""
     <div class="objetivo-box">
         <h4>🎯 Variable Objetivo (Y): <code>{objetivo}</code></h4>
-        <p>
-        <span class="clase-chip {e1['chip']}">{e1['icon']} Clase 1 · {e1['nombre']}</span><br>
-        {y_desc}<br><br>
-        <span class="clase-chip {e0['chip']}">{e0['icon']} Clase 0 · {e0['nombre']}</span><br>
-        {y_zero}
-        </p>
+        <p><strong>Clase 1:</strong> {y_desc}<br>
+        <strong>Clase 0:</strong> {y_zero}</p>
     </div>
     """, unsafe_allow_html=True)
+
+    # ─── Variables Predictoras (X) ───
+    st.markdown("#### 🛠️ Variables Predictoras (X)")
+    st.caption("Estas son las características que el modelo usa para hacer la predicción.")
+
+    # Numéricas
+    st.markdown("**📊 Numéricas**")
+    cols_per_row = 4
+    for i in range(0, len(NUMERIC_FEATURES), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for j, feat in enumerate(NUMERIC_FEATURES[i:i+cols_per_row]):
+            icon, name, desc = FEATURE_META[feat]
+            with cols[j]:
+                st.markdown(f"""
+                <div class="var-card">
+                    <span class="var-icon">{icon}</span><span class="var-name">{name}</span>
+                    <div class="var-desc">{desc}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # Categóricas (solo se usan en el modelo de churn)
     if objetivo == "churn":
-        st.info("⚠️ Ojo: en el modelo de **Churn** la lógica se invierte respecto a Recurrencia — aquí Clase 1 es la mala noticia (cliente en riesgo), no la buena.")
+        st.markdown("**🏷️ Categóricas**")
+        cols = st.columns(3)
+        for j, feat in enumerate(CATEGORICAL_FEATURES):
+            icon, name, desc = FEATURE_META[feat]
+            with cols[j]:
+                st.markdown(f"""
+                <div class="var-card">
+                    <span class="var-icon">{icon}</span><span class="var-name">{name}</span>
+                    <div class="var-desc">{desc}</div>
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.caption("El modelo de recurrencia usa solo variables de comportamiento de compra (sin datos demográficos), para reducir ruido con pocos clientes.")
 
     with st.expander("📊 Ver distribución de la variable objetivo"):
         balance = df["target"].value_counts().rename_axis("clase").reset_index(name="registros")
-        balance["etiqueta"] = balance["clase"].map(lambda c: f"{etiquetas[c]['icon']} {etiquetas[c]['nombre']} (Clase {c})")
-        fig = px.bar(balance, x="etiqueta", y="registros", color="etiqueta", color_discrete_sequence=[STEEL_LIGHT, GOLD_LIGHT])
-        fig.update_traces(marker_line_width=1, marker_line_color=PANEL_SOLID)
+        balance["etiqueta"] = balance["clase"].map({0: "Clase 0", 1: "Clase 1"})
+        fig = px.bar(balance, x="etiqueta", y="registros", color="etiqueta", color_discrete_sequence=[COLORS["blue"], COLORS["gold"]])
         fig.update_layout(**PLOTLY_LAYOUT, showlegend=False)
-        with st.container(border=True):
-            st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def mostrar_evaluacion(resultado: dict, objetivo: str) -> None:
-    # ─── Selección de modelo y comparación de algoritmos (CV, dentro del train) ───
-    st.markdown(f"**🧩 Modelo seleccionado:** {resultado['modelo_nombre']} · "
-                f"Accuracy en CV (train): {resultado['cv_accuracy']:.1%} ± {resultado['cv_accuracy_std']:.1%}")
+    st.subheader("📊 Evaluación real")
+
+    st.caption(f"División 80% entrenamiento / 20% prueba (estratificada). El modelo se eligió comparando "
+               f"3 algoritmos con validación cruzada de {CV_FOLDS} particiones sobre el 80% de entrenamiento; "
+               f"el 20% de prueba nunca participó en esa selección y se usó una sola vez al final.")
 
     if resultado["accuracy_ideal_alcanzado"]:
         st.success(f"✅ Accuracy en TEST: {resultado['metrics']['accuracy']:.1%} — supera la meta ideal de {ACCURACY_IDEAL:.0%}.")
@@ -594,78 +461,100 @@ def mostrar_evaluacion(resultado: dict, objetivo: str) -> None:
     else:
         st.warning(f"⚠️ Accuracy en TEST: {resultado['metrics']['accuracy']:.1%}. No alcanza el {ACCURACY_MINIMA:.0%} mínimo con las variables actuales.")
 
-    with st.expander("⚖️ Ver comparación de los 3 algoritmos evaluados (Accuracy en CV, train)"):
-        st.dataframe(resultado["comparacion_modelos"].round(3), hide_index=True, use_container_width=True)
-
     st.markdown("---")
 
-    # ─── Confirmación en TEST: una sola partición nunca vista ───
-    st.markdown("**🔒 Confirmación en TEST (20%, una sola partición nunca vista durante el entrenamiento)**")
-    st.caption("Con pocos clientes, una sola partición de test tiene alta varianza estadística. Se muestra como confirmación adicional, no como la cifra principal.")
-    labels = [("Accuracy", "accuracy", "🎯", GOLD_LIGHT, 1, "%", 100), ("Precision", "precision", "🔍", STEEL_LIGHT, 1, "%", 100),
-              ("Recall", "recall", "📡", "#3FA6A6", 1, "%", 100), ("F1-Score", "f1", "⚖️", GREEN, 1, "%", 100),
-              ("ROC-AUC", "roc_auc", "📈", GOLD, 1, "%", 100), ("Log-Loss", "log_loss", "📉", "#C97BD1", 3, "", 1)]
+    # ─── Métricas de clasificación en TEST (Accuracy, Precisión-Recall, ROC-AUC, Log-Loss) ───
+    st.markdown("**🔒 Métricas de clasificación en TEST (20%, nunca visto durante el entrenamiento)**")
+    labels = [("Accuracy", "accuracy"), ("Precisión", "precision"), ("Recall", "recall"),
+              ("F1-Score", "f1"), ("ROC-AUC", "roc_auc"), ("Log-Loss", "log_loss")]
     cols = st.columns(6)
-    for col, (label, key, icon, accent, decimals, suffix, escala) in zip(cols, labels):
+    for col, (label, key) in zip(cols, labels):
         with col:
-            kpi_counter(icon, label, resultado['metrics'][key] * escala, "", accent, decimals=decimals, suffix=suffix)
-    st.caption(f"80% entrenamiento · 20% prueba · {resultado['X_test'].shape[0]} clientes en TEST · "
-               f"Modelo: {resultado['modelo_nombre']} · Umbral de decisión: {resultado['umbral']:.2f}")
+            valor = resultado["metrics"][key]
+            fmt = f"{valor:.3f}" if key == "log_loss" else f"{valor:.1%}"
+            st.metric(label, fmt)
+    st.caption(f"{resultado['X_test'].shape[0]} clientes en TEST · Umbral de decisión: {resultado['umbral']:.2f}")
 
     a, b = st.columns(2)
     with a:
         cm = confusion_matrix(resultado["y_test"], resultado["y_pred"], labels=[0, 1])
         fig = go.Figure(go.Heatmap(z=cm, x=["Predicho 0", "Predicho 1"], y=["Real 0", "Real 1"], text=cm, texttemplate="%{text}",
-            colorscale=[[0, "#12141B"], [0.5, STEEL], [1, GOLD_LIGHT]], showscale=False, textfont=dict(color=TEXT, size=18)))
+            colorscale=[[0, PANEL_SOLID], [0.5, STEEL], [1, GOLD_LIGHT]], showscale=False, textfont=dict(color=TEXT, size=16)))
         fig.update_layout(title="Matriz de confusión", height=360, **PLOTLY_LAYOUT)
-        with st.container(border=True):
-            st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
     with b:
         fpr, tpr, _ = roc_curve(resultado["y_test"], resultado["y_proba"])
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=f"Modelo AUC={resultado['metrics']['roc_auc']:.2f}",
-            line={"color": GOLD_LIGHT, "width": 4}, fill="tozeroy", fillcolor="rgba(245,207,122,.12)"))
-        fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Azar", line={"color": MUTED, "dash": "dash"}))
+        fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=f"Modelo AUC={resultado['metrics']['roc_auc']:.2f}", line={"color": COLORS["gold"], "width": 3}))
+        fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Azar", line={"color": COLORS["muted"], "dash": "dash"}))
         fig.update_layout(title="Curva ROC", height=360, **PLOTLY_LAYOUT)
-        with st.container(border=True):
-            st.plotly_chart(fig, use_container_width=True)
-
+        st.plotly_chart(fig, use_container_width=True)
     report = pd.DataFrame(classification_report(resultado["y_test"], resultado["y_pred"], target_names=["Clase 0", "Clase 1"], output_dict=True)).T.reset_index().rename(columns={"index": "Clase"})
-    with st.expander("📄 Ver reporte de clasificación completo", expanded=False):
-        st.dataframe(report.round(3), hide_index=True, use_container_width=True)
-
+    st.dataframe(report.round(3), hide_index=True, use_container_width=True)
     with st.expander("Diagnóstico de probabilidades"):
         dist = pd.DataFrame({"probabilidad": resultado["y_proba"]})
-        counts, edges = np.histogram(dist.probabilidad, bins=25, range=(0, 1))
-        centers = (edges[:-1] + edges[1:]) / 2
-        fig = go.Figure(go.Bar(x=centers, y=counts, marker=dict(color=centers, colorscale=[[0, STEEL], [0.5, "#3FA6A6"], [1, GOLD_LIGHT]],
-            line=dict(width=1, color=PANEL_SOLID))))
-        fig.update_layout(title="Distribución de probabilidades predichas", xaxis_title="Probabilidad", yaxis_title="Frecuencia", **PLOTLY_LAYOUT)
-        with st.container(border=True):
-            st.plotly_chart(fig, use_container_width=True)
+        fig = px.histogram(dist, x="probabilidad", nbins=25, color_discrete_sequence=[COLORS["blue"]])
+        fig.update_layout(**PLOTLY_LAYOUT)
+        st.plotly_chart(fig, use_container_width=True)
         st.write(f"Mínimo: {dist.probabilidad.min():.4f} · Máximo: {dist.probabilidad.max():.4f} · Desviación: {dist.probabilidad.std():.4f}")
+
+
+# ─── Perfiles de ejemplo (valores típicos reales, calculados por mediana de clase) ──
+# Se usan para poblar el laboratorio de predicción con un clic, sin tener que
+# buscar un cliente ni llenar el formulario a mano durante una demo en vivo.
+PERFIL_CLIENTE_FIEL = {
+    "recencia": 45, "frecuencia": 8, "monto_total": 380, "ticket_promedio": 48,
+    "antiguedad_dias": 600, "productos_unicos": 14, "categorias_unicas": 4,
+    "dias_promedio_entre_compras": 55,
+    "id_tipo_documento": "1", "genero": "Masculino", "localidad": "LIMÓN INDANZA",
+}
+PERFIL_CLIENTE_RIESGO = {
+    "recencia": 210, "frecuencia": 2, "monto_total": 70, "ticket_promedio": 40,
+    "antiguedad_dias": 400, "productos_unicos": 4, "categorias_unicas": 2,
+    "dias_promedio_entre_compras": 40,
+    "id_tipo_documento": "1", "genero": "Femenino", "localidad": "LIMÓN INDANZA",
+}
+
+
+def _cargar_perfil(objetivo: str, perfil: dict) -> None:
+    """Escribe los valores del perfil directamente en session_state de los widgets."""
+    for feature, valor in perfil.items():
+        st.session_state[f"{objetivo}_{feature}"] = valor
 
 
 def laboratorio(resultado: dict, df: pd.DataFrame, objetivo: str) -> None:
     st.subheader("🔮 Laboratorio de predicción")
-    st.caption("Selecciona un cliente real para probar el modelo con sus variables históricas, o ajusta los valores en el formulario.")
-    clientes = query_df("SELECT cedula, nombre, apellido FROM cliente WHERE cedula <> :consumer", {"consumer": CONSUMIDOR_FINAL})
-    clientes["nombre_completo"] = (clientes.nombre.fillna("").astype(str).str.strip() + " " + clientes.apellido.fillna("").astype(str).str.strip()).str.strip()
-    disponibles = df.merge(clientes[["cedula", "nombre_completo"]], left_on="cedula_cliente", right_on="cedula", how="left").drop_duplicates("cedula_cliente").sort_values("nombre_completo")
-    disponibles["etiqueta"] = disponibles.apply(lambda r: f"{r.nombre_completo or 'Sin nombre'} · {r.cedula_cliente}", axis=1)
-    opciones = disponibles["etiqueta"].tolist()
-    elegido = st.selectbox("👤 Cliente real", opciones, key=f"selector_{objetivo}")
-    fila = disponibles[disponibles.etiqueta == elegido].iloc[0]
+    st.caption("Carga un ejemplo con un clic o busca un cliente real, ajusta lo que quieras y ejecuta la predicción.")
+
+    features_modelo = resultado["features"]
+
+    # ─── Botones de ejemplo rápido ───
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        if st.button("✅ Ejemplo: cliente fiel", use_container_width=True, key=f"btn_fiel_{objetivo}"):
+            _cargar_perfil(objetivo, PERFIL_CLIENTE_FIEL)
+            st.rerun()
+    with b2:
+        if st.button("⚠️ Ejemplo: cliente en riesgo", use_container_width=True, key=f"btn_riesgo_{objetivo}"):
+            _cargar_perfil(objetivo, PERFIL_CLIENTE_RIESGO)
+            st.rerun()
+    with b3:
+        usar_cliente_real = st.toggle("🔎 Buscar cliente real", key=f"toggle_real_{objetivo}")
+
+    if usar_cliente_real:
+        clientes = query_df("SELECT cedula, nombre, apellido FROM cliente WHERE cedula <> :consumer", {"consumer": CONSUMIDOR_FINAL})
+        clientes["nombre_completo"] = (clientes.nombre.fillna("").astype(str).str.strip() + " " + clientes.apellido.fillna("").astype(str).str.strip()).str.strip()
+        disponibles = df.merge(clientes[["cedula", "nombre_completo"]], left_on="cedula_cliente", right_on="cedula", how="left").drop_duplicates("cedula_cliente").sort_values("nombre_completo")
+        disponibles["etiqueta"] = disponibles.apply(lambda r: f"{r.nombre_completo or 'Sin nombre'} · {r.cedula_cliente}", axis=1)
+        elegido = st.selectbox("👤 Cliente real", disponibles["etiqueta"].tolist(), key=f"selector_{objetivo}")
+        if st.button("Cargar datos de este cliente", key=f"btn_cargar_real_{objetivo}"):
+            fila = disponibles[disponibles.etiqueta == elegido].iloc[0]
+            _cargar_perfil(objetivo, {f: fila[f] for f in NUMERIC_FEATURES + CATEGORICAL_FEATURES if f in fila})
+            st.rerun()
+
+    st.markdown("---")
 
     with st.form(f"formulario_{objetivo}"):
-        st.markdown(f"""
-        <div class="client-card">
-            <span style="font-size:1.2rem;">👤</span>
-            <strong>{fila['nombre_completo'] or 'Sin nombre'}</strong>
-            <span>Cédula: <code>{fila['cedula_cliente']}</code></span>
-        </div>
-        """, unsafe_allow_html=True)
-
         st.markdown(f"**📊 Variables Numéricas**")
         entradas = {}
         c1, c2, c3 = st.columns(3)
@@ -673,52 +562,53 @@ def laboratorio(resultado: dict, df: pd.DataFrame, objetivo: str) -> None:
             icon, label, _ = FEATURE_META[feature]
             target_col = [c1, c2, c3][idx % 3]
             with target_col:
+                valor_default = st.session_state.get(f"{objetivo}_{feature}", PERFIL_CLIENTE_FIEL[feature])
                 entradas[feature] = st.number_input(
                     f"{icon} {label}",
                     min_value=0.0,
-                    value=float(fila[feature]),
+                    value=float(valor_default),
                     step=1.0,
                     format="%.0f",
                     key=f"{objetivo}_{feature}"
                 )
 
-        st.markdown(f"**🏷️ Variables Categóricas**")
-        cat_cols = st.columns(3)
-        for idx, feature in enumerate(CATEGORICAL_FEATURES):
-            icon, label, _ = FEATURE_META[feature]
-            opciones_cat = sorted(df[feature].astype(str).unique().tolist())
-            actual = str(fila[feature])
-            default = opciones_cat.index(actual) if actual in opciones_cat else 0
-            with cat_cols[idx]:
-                entradas[feature] = st.selectbox(f"{icon} {label}", opciones_cat, index=default, key=f"{objetivo}_{feature}")
+        # Las variables categóricas solo se piden (y solo se usan) en el modelo de churn.
+        if "id_tipo_documento" in features_modelo:
+            st.markdown(f"**🏷️ Variables Categóricas**")
+            cat_cols = st.columns(3)
+            for idx, feature in enumerate(CATEGORICAL_FEATURES):
+                icon, label, _ = FEATURE_META[feature]
+                opciones_cat = sorted(df[feature].astype(str).unique().tolist())
+                default_val = str(st.session_state.get(f"{objetivo}_{feature}", PERFIL_CLIENTE_FIEL[feature]))
+                default_idx = opciones_cat.index(default_val) if default_val in opciones_cat else 0
+                with cat_cols[idx]:
+                    entradas[feature] = st.selectbox(f"{icon} {label}", opciones_cat, index=default_idx, key=f"{objetivo}_{feature}")
 
         ejecutar = st.form_submit_button("🔮 Ejecutar predicción", type="primary", use_container_width=True)
 
     if ejecutar:
-        # El pipeline solo toma las columnas con las que fue entrenado (resultado["features"]);
-        # el resto de columnas del formulario se ignoran de forma segura por el ColumnTransformer.
-        entrada = pd.DataFrame([entradas], columns=FEATURES)
+        entrada = pd.DataFrame([entradas], columns=features_modelo)
         prob = float(resultado["modelo"].predict_proba(entrada)[:, 1][0])
-        positivo = prob >= resultado["umbral"]
-        etiquetas = etiquetas_clase(objetivo)
+        umbral_operativo = resultado["umbral"]
+        positivo = prob >= umbral_operativo
         st.markdown("---")
         st.markdown("### 🎯 Resultado de la Predicción")
         r1, r2 = st.columns([1, 2])
         with r1:
-            st.metric("📊 Probabilidad", f"{prob:.1%}", f"umbral {resultado['umbral']:.0%}")
+            st.metric("📊 Probabilidad", f"{prob:.1%}", f"umbral: {umbral_operativo:.0%}")
         with r2:
-            clase_predicha = etiquetas[1] if positivo else etiquetas[0]
             if objetivo == "recurrencia":
                 if positivo:
-                    st.success(f"🟢 Cliente potencialmente **{clase_predicha['nombre'].lower()}** — recurrente")
+                    st.success("🟢 Cliente potencialmente recurrente")
                 else:
-                    st.error(f"🔴 Baja probabilidad de recurrencia — cliente **{clase_predicha['nombre'].lower()}**")
+                    st.error("🔴 Baja probabilidad de recurrencia")
             else:
                 if positivo:
-                    st.error(f"🔴 Alto riesgo de abandono — cliente **{clase_predicha['nombre'].lower()}**")
+                    st.error("🔴 Alto riesgo de abandono")
                 else:
-                    st.success(f"🟢 Bajo riesgo de abandono — cliente **{clase_predicha['nombre'].lower()}**")
+                    st.success("🟢 Bajo riesgo de abandono")
         st.progress(prob)
+        st.caption(f"Clasificación con el mismo umbral usado en la evaluación oficial ({umbral_operativo:.0%}) — consistente con las métricas reportadas.")
         with st.expander("📝 Ver datos de entrada utilizados"):
             st.dataframe(entrada, hide_index=True, use_container_width=True)
 
@@ -731,23 +621,16 @@ try:
     if ventas.empty:
         st.warning("No existen ventas válidas para construir los modelos.")
     else:
-        st.info("📆 Diseño temporal: observación hasta 31/12/2023. Recurrencia y churn usan 120 días futuros. El consumidor final no se modela.")
+        st.info(f"📆 Diseño temporal: observación hasta 31/12/2023. Recurrencia y churn usan {DIAS_RECURRENCIA} días futuros. El consumidor final no se modela.")
         objetivo = st.radio("Selecciona el modelo", ["recurrencia", "churn"], format_func=lambda x: "🧾 Recurrencia" if x == "recurrencia" else "⚠️ Churn", horizontal=True)
         df = construir_dataset(ventas, detalle, clientes, objetivo)
-        etiquetas = etiquetas_clase(objetivo)
 
         # ─── TARJETAS MÉTRICAS ARRIBA (antes de los tabs) ────────────────────
         balance = df.target.value_counts()
-        e1, e0 = etiquetas[1], etiquetas[0]
         cards = st.columns(3)
-        with cards[0]:
-            kpi_counter("👥", "CLIENTES MODELABLES", len(df), "Consumidor final excluido", STEEL_LIGHT)
-        with cards[1]:
-            kpi_counter(e1["icon"], f"CLASE 1 · {e1['nombre']}", int(balance.get(1, 0)), e1["desc"],
-                        GREEN if e1["chip"] == "clase-activo" else RED)
-        with cards[2]:
-            kpi_counter(e0["icon"], f"CLASE 0 · {e0['nombre']}", int(balance.get(0, 0)), e0["desc"],
-                        GREEN if e0["chip"] == "clase-activo" else RED)
+        cards[0].metric("👥 CLIENTES MODELABLES", f"{len(df):,}", "Consumidor final excluido")
+        cards[1].metric("✅ CLASE 1", f"{int(balance.get(1, 0)):,}", "Objetivo positivo")
+        cards[2].metric("⬜ CLASE 0", f"{int(balance.get(0, 0)):,}", "Objetivo negativo")
 
         # ─── TABS ────────────────────────────────────────────────────────────
         tabs = st.tabs(["📘 Entender el modelo", "⚙️ Entrenamiento", "📊 Evaluación", "🔮 Probar predicción"])
@@ -757,12 +640,11 @@ try:
             st.markdown("**⚙️ Configuración aplicada**")
             st.write(
                 f"Clasificación binaria con división real 80% entrenamiento / 20% prueba (estratificada). "
-                f"Internamente se comparan 3 algoritmos (Regresión Logística, Random Forest y Gradient "
-                f"Boosting) con validación cruzada de {CV_FOLDS} particiones dentro del 80% de entrenamiento, "
-                f"seleccionando el que obtenga mayor Accuracy promedio — la métrica objetivo del proyecto "
-                f"(mínimo {ACCURACY_MINIMA:.0%}, ideal {ACCURACY_IDEAL:.0%}+). El 20% de prueba se usa una "
-                f"única vez, al final, para confirmar el desempeño real sobre datos nunca vistos, con umbral "
-                f"de decisión estándar ({UMBRAL_DECISION:.2f})."
+                f"Internamente se evalúan varias configuraciones con validación cruzada de {CV_FOLDS} "
+                f"particiones dentro del 80% de entrenamiento, seleccionando la que obtenga mayor Accuracy "
+                f"promedio — la métrica objetivo del proyecto (mínimo {ACCURACY_MINIMA:.0%}, ideal "
+                f"{ACCURACY_IDEAL:.0%}+). El 20% de prueba se usa una única vez, al final, para confirmar "
+                f"el desempeño real sobre datos nunca vistos."
             )
             if st.button("🚀 Entrenar / reentrenar modelo", type="primary", key=f"entrenar_{objetivo}"):
                 with st.spinner("Separando datos 80/20 y comparando modelos..."):
@@ -775,7 +657,7 @@ try:
             if f"resultado_{objetivo}" in st.session_state:
                 res_actual = st.session_state[f"resultado_{objetivo}"]
                 st.json({
-                    "modelo_seleccionado": res_actual["modelo_nombre"],
+                    "tipo_modelo": NOMBRE_MODELO_DISPLAY,
                     "accuracy_cv_train": round(res_actual["cv_accuracy"], 3),
                     "accuracy_test": round(res_actual["metrics"]["accuracy"], 3),
                 })
